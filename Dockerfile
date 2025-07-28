@@ -1,6 +1,7 @@
 FROM lukemathwalker/cargo-chef:latest-rust-latest as chef
 WORKDIR /app
 RUN apt update && apt install lld clang -y 
+RUN cargo install sqlx-cli --no-default-features --features rustls,postgres
 
 FROM chef as planner
 COPY . .
