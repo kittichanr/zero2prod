@@ -2,13 +2,13 @@ use secrecy::{ExposeSecret, SecretString};
 use serde_aux::field_attributes::deserialize_number_from_string;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct Settings {
     pub database: DatabaseSettings,
     pub application: ApplicationSettings,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct ApplicationSettings {
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub port: u16,
@@ -24,6 +24,19 @@ pub struct DatabaseSettings {
     pub port: u16,
     pub database_name: String,
     pub require_ssl: bool,
+}
+
+impl std::fmt::Debug for DatabaseSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DatabaseSettings")
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database_name", &self.database_name)
+            .field("require_ssl", &self.require_ssl)
+            .finish()
+    }
 }
 
 impl DatabaseSettings {
