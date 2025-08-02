@@ -17,7 +17,6 @@ chrono = { version = "0.4.41", default-features = false ,features = ["clock"] }
 claims = "0.8.0"
 config = "0.15.13"
 log = "0.4.27"
-reqwest = "0.12.22"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde-aux = "4.7.0"
@@ -44,6 +43,12 @@ features = [
     "chrono",
     "migrate"
 ]
+
+[dependencies.reqwest]
+version = "0.12.22"
+default-features = false
+features = ["json", "rustls-tls"]
+
 
 [dev-dependencies]
 fake = "4.3.0"
