@@ -61,7 +61,7 @@ async fn newsletter_are_delivered_to_confirmed_subscribers() {
     let app = spawn_app().await;
     create_confirmed_subscriber(&app).await;
 
-    let _ = Mock::given(path("/email"))
+    let _mock_guard = Mock::given(path("/email"))
         .and(method("POST"))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
