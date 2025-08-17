@@ -40,6 +40,7 @@ hmac = "0.12.1"
 sha2 = "0.10.9"
 hex = "0.4.3"
 actix-web-flash-messages = { version = "0.5", features = ["cookies"] }
+actix-session = { version = "0.10.1", features = ["redis-session-rustls"] }
 
 
 [dependencies.sqlx]
