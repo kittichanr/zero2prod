@@ -1,5 +1,6 @@
 use anyhow::Context;
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
+use argon2::password_hash::{SaltString, rand_core::OsRng};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use secrecy::{ExposeSecret, SecretString};
 
 use sqlx::PgPool;
@@ -40,11 +41,11 @@ pub async fn validate_credentials(
         expected_password_hash = stored_password_hash;
     }
 
-    let _ = spawn_blocking_with_tracing(move || {
+    spawn_blocking_with_tracing(move || {
         verify_password_hash(expected_password_hash, credentials.password)
     })
     .await
-    .context("Failed to spawn blocking task")?;
+    .context("Failed to spawn blocking task")??;
 
     user_id
         .ok_or_else(|| anyhow::anyhow!("Unknown username"))
@@ -89,4 +90,37 @@ async fn get_stored_credentials(
     .map(|row| (row.user_id, SecretString::new(row.password_hash.into())));
 
     Ok(row)
+}
+
+#[tracing::instrument("Change password", skip(password, pool))]
+pub async fn change_password(
+    user_id: Uuid,
+    password: SecretString,
+    pool: &PgPool,
+) -> Result<(), anyhow::Error> {
+    let password_hash = spawn_blocking_with_tracing(move || compute_password_hash(password))
+        .await?
+        .context("Failed to hash password")?;
+
+    sqlx::query!(
+        r#"
+        UPDATE users
+        SET password_hash = $1
+        WHERE user_id = $2
+        "#,
+        password_hash.expose_secret(),
+        user_id
+    )
+    .execute(pool)
+    .await
+    .context("Failed to change user's password in the database.")?;
+    Ok(())
+}
+
+fn compute_password_hash(password: SecretString) -> Result<SecretString, anyhow::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default()
+        .hash_password(password.expose_secret().as_bytes(), &salt)?
+        .to_string();
+    Ok(SecretString::new(password_hash.into()))
 }
