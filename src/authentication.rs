@@ -26,8 +26,12 @@ pub async fn validate_credentials(
     pool: &PgPool,
 ) -> Result<Uuid, AuthError> {
     let mut user_id = None;
-    let mut expected_password_hash =
-        SecretString::new("$argon2id$v=19$m=15000,t=2,p=1$gZiV".into());
+    let mut expected_password_hash = SecretString::new(
+        "$argon2id$v=19$m=15000,t=2,p=1$\
+        gZiV/M1gPc22ElAH/Jh1Hw$\
+        CWOrkoo7oJBQ/iyh7uJ0LO2aLEfrHwTWllSAxT0zRno"
+            .into(),
+    );
 
     if let Some((store_user_id, stored_password_hash)) =
         get_stored_credentials(&credentials.username, pool).await?
