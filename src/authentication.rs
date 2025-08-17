@@ -1,6 +1,6 @@
 use anyhow::Context;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::{Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version};
 use secrecy::{ExposeSecret, SecretString};
 
 use sqlx::PgPool;
@@ -119,8 +119,12 @@ pub async fn change_password(
 
 fn compute_password_hash(password: SecretString) -> Result<SecretString, anyhow::Error> {
     let salt = SaltString::generate(&mut OsRng);
-    let password_hash = Argon2::default()
-        .hash_password(password.expose_secret().as_bytes(), &salt)?
-        .to_string();
+    let password_hash = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        Version::V0x13,
+        Params::new(15000, 2, 1, None).unwrap(),
+    )
+    .hash_password(password.expose_secret().as_bytes(), &salt)?
+    .to_string();
     Ok(SecretString::new(password_hash.into()))
 }
