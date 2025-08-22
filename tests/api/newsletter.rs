@@ -1,14 +1,18 @@
-use std::{path, time::Duration};
+use std::time::Duration;
 
+use fake::{
+    Fake,
+    faker::{internet::en::SafeEmail, name::en::Name},
+};
 use wiremock::{
-    Mock, ResponseTemplate,
+    Mock, MockBuilder, ResponseTemplate,
     matchers::{any, method, path},
 };
 
 use crate::helpers::{ConfirmationLinks, TestApp, assert_is_redirect_to, spawn_app};
 
 #[tokio::test]
-async fn newsletter_are_not_delivered_to_unconfirmed_subscribers() {
+async fn newsletters_are_not_delivered_to_unconfirmed_subscribers() {
     let app = spawn_app().await;
     create_unconfirmed_subscriber(&app).await;
     app.test_user.login(&app).await;
@@ -20,22 +24,31 @@ async fn newsletter_are_not_delivered_to_unconfirmed_subscribers() {
         .await;
 
     let newsletter_request_body = serde_json::json!({
-        "title":"Newsletter title",
+        "title": "Newsletter title",
         "text_content": "Newsletter body as plain text",
         "html_content": "<p>Newsletter body as HTML</p>",
         "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
-
     let response = app.post_publish_newsletter(&newsletter_request_body).await;
     assert_is_redirect_to(&response, "/admin/newsletters");
 
-    // Act - Part 2 - Follow the redirect
     let html_page = app.get_publish_newsletter_html().await;
-    assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
+    assert!(html_page.contains(
+        "<p><i>The newsletter issue has been accepted - \
+        emails will go out shortly.</i></p>"
+    ));
+    app.dispatch_all_pending_emails().await;
 }
 
 async fn create_unconfirmed_subscriber(app: &TestApp) -> ConfirmationLinks {
-    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    let name: String = Name().fake();
+    let email: String = SafeEmail().fake();
+
+    let body = serde_urlencoded::to_string(serde_json::json!({
+        "name": name,
+        "email": email
+    }))
+    .unwrap();
 
     let _mock_guard = Mock::given(path("/email"))
         .and(method("POST"))
@@ -45,7 +58,7 @@ async fn create_unconfirmed_subscriber(app: &TestApp) -> ConfirmationLinks {
         .mount_as_scoped(&app.email_server)
         .await;
 
-    app.post_subscriptions(body.into())
+    app.post_subscriptions(body)
         .await
         .error_for_status()
         .unwrap();
@@ -67,25 +80,28 @@ async fn newsletters_are_delivered_to_confirmed_subscribers() {
     create_confirmed_subscriber(&app).await;
     app.test_user.login(&app).await;
 
-    let _mock_guard = Mock::given(path("/email"))
+    Mock::given(path("/email"))
         .and(method("POST"))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
-        .mount_as_scoped(&app.email_server)
+        .mount(&app.email_server)
         .await;
 
     let newsletter_request_body = serde_json::json!({
-        "title":"Newsletter title",
+        "title": "Newsletter title",
         "text_content": "Newsletter body as plain text",
         "html_content": "<p>Newsletter body as HTML</p>",
         "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
-
     let response = app.post_publish_newsletter(&newsletter_request_body).await;
     assert_is_redirect_to(&response, "/admin/newsletters");
 
     let html_page = app.get_publish_newsletter_html().await;
-    assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
+    assert!(html_page.contains(
+        "<p><i>The newsletter issue has been accepted - \
+        emails will go out shortly.</i></p>"
+    ));
+    app.dispatch_all_pending_emails().await;
 }
 
 async fn create_confirmed_subscriber(app: &TestApp) {
@@ -134,27 +150,35 @@ async fn newsletter_creation_is_idempotent() {
         .await;
 
     let newsletter_request_body = serde_json::json!({
-        "title":"Newsletter title",
+        "title": "Newsletter title",
         "text_content": "Newsletter body as plain text",
         "html_content": "<p>Newsletter body as HTML</p>",
-        "idempotency_key": uuid::Uuid::new_v4().to_string(),
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
+    let response = app.post_publish_newsletter(&newsletter_request_body).await;
+    assert_is_redirect_to(&response, "/admin/newsletters");
+
+    let html_page = app.get_publish_newsletter_html().await;
+    assert!(html_page.contains(
+        "<p><i>The newsletter issue has been accepted - \
+        emails will go out shortly.</i></p>"
+    ));
 
     let response = app.post_publish_newsletter(&newsletter_request_body).await;
     assert_is_redirect_to(&response, "/admin/newsletters");
 
     let html_page = app.get_publish_newsletter_html().await;
-    assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
+    assert!(html_page.contains(
+        "<p><i>The newsletter issue has been accepted - \
+        emails will go out shortly.</i></p>"
+    ));
 
-    let response = app.post_publish_newsletter(&newsletter_request_body).await;
-    assert_is_redirect_to(&response, "/admin/newsletters");
-
-    let html_page = app.get_publish_newsletter_html().await;
-    assert!(html_page.contains("<p><i>The newsletter issue has been published!</i></p>"));
+    app.dispatch_all_pending_emails().await;
 }
 
 #[tokio::test]
 async fn concurrent_form_submission_is_handled_gracefully() {
+    // Arrange
     let app = spawn_app().await;
     create_confirmed_subscriber(&app).await;
     app.test_user.login(&app).await;
@@ -167,10 +191,10 @@ async fn concurrent_form_submission_is_handled_gracefully() {
         .await;
 
     let newsletter_request_body = serde_json::json!({
-    "title":"Newsletter title",
+        "title": "Newsletter title",
         "text_content": "Newsletter body as plain text",
         "html_content": "<p>Newsletter body as HTML</p>",
-        "idempotency_key": uuid::Uuid::new_v4().to_string(),
+        "idempotency_key": uuid::Uuid::new_v4().to_string()
     });
     let response1 = app.post_publish_newsletter(&newsletter_request_body);
     let response2 = app.post_publish_newsletter(&newsletter_request_body);
@@ -181,4 +205,6 @@ async fn concurrent_form_submission_is_handled_gracefully() {
         response1.text().await.unwrap(),
         response2.text().await.unwrap()
     );
+    app.dispatch_all_pending_emails().await;
+    // Mock verifies on Drop that we have sent the newsletter email **once**
 }

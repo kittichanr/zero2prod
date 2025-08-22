@@ -1,9 +1,10 @@
-use actix_web::{HttpResponse, body::to_bytes, http::StatusCode};
-use anyhow::Ok;
-use sqlx::{Executor, PgPool, Postgres, Transaction};
+use super::IdempotencyKey;
+use actix_web::HttpResponse;
+use actix_web::body::to_bytes;
+use actix_web::http::StatusCode;
+use sqlx::{Executor, PgPool};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
-
-use crate::idempotency::IdempotencyKey;
 
 #[derive(Debug, sqlx::Type)]
 #[sqlx(type_name = "header_pair")]
@@ -19,21 +20,20 @@ pub async fn get_saved_response(
 ) -> Result<Option<HttpResponse>, anyhow::Error> {
     let saved_response = sqlx::query!(
         r#"
-        SELECT
-            response_status_code as "response_status_code!",
+        SELECT 
+            response_status_code as "response_status_code!", 
             response_headers as "response_headers!: Vec<HeaderPairRecord>",
             response_body as "response_body!"
         FROM idempotency
-        WHERE
-            user_id = $1 AND
-            idempotency_key = $2
+        WHERE 
+          user_id = $1 AND
+          idempotency_key = $2
         "#,
         user_id,
         idempotency_key.as_ref()
     )
     .fetch_optional(pool)
     .await?;
-
     if let Some(r) = saved_response {
         let status_code = StatusCode::from_u16(r.response_status_code.try_into()?)?;
         let mut response = HttpResponse::build(status_code);
@@ -58,7 +58,7 @@ pub async fn save_response(
     let headers = {
         let mut h = Vec::with_capacity(response_head.headers().len());
         for (name, value) in response_head.headers().iter() {
-            let name = name.to_string().to_owned();
+            let name = name.as_str().to_owned();
             let value = value.as_bytes().to_owned();
             h.push(HeaderPairRecord { name, value });
         }
@@ -67,9 +67,9 @@ pub async fn save_response(
     transaction
         .execute(sqlx::query_unchecked!(
             r#"
-        UPDATE idempotency 
-        SET
-            response_status_code = $3,
+        UPDATE idempotency
+        SET 
+            response_status_code = $3, 
             response_headers = $4,
             response_body = $5
         WHERE
@@ -79,7 +79,7 @@ pub async fn save_response(
             user_id,
             idempotency_key.as_ref(),
             status_code,
-            headers as Vec<HeaderPairRecord>,
+            headers,
             body.as_ref()
         ))
         .await?;
@@ -91,6 +91,7 @@ pub async fn save_response(
 
 #[allow(clippy::large_enum_variant)]
 pub enum NextAction {
+    // Return transaction for later usage
     StartProcessing(Transaction<'static, Postgres>),
     ReturnSavedResponse(HttpResponse),
 }
@@ -101,28 +102,20 @@ pub async fn try_processing(
     user_id: Uuid,
 ) -> Result<NextAction, anyhow::Error> {
     let mut transaction = pool.begin().await?;
-    let _ = transaction
-        .execute(sqlx::query!(
-            r#"SET TRANSACTION ISOLATION LEVEL repeatable read"#
-        ))
-        .await;
-    let n_inserted_rows = transaction
-        .execute(sqlx::query!(
-            r#"
+    let query = sqlx::query!(
+        r#"
         INSERT INTO idempotency (
-            user_id,
+            user_id, 
             idempotency_key,
             created_at
-    )
-    VALUES ($1, $2, now())
-    ON CONFLICT DO NOTHING
-    "#,
-            user_id,
-            idempotency_key.as_ref()
-        ))
-        .await?
-        .rows_affected();
-
+        ) 
+        VALUES ($1, $2, now()) 
+        ON CONFLICT DO NOTHING
+        "#,
+        user_id,
+        idempotency_key.as_ref()
+    );
+    let n_inserted_rows = transaction.execute(query).await?.rows_affected();
     if n_inserted_rows > 0 {
         Ok(NextAction::StartProcessing(transaction))
     } else {
